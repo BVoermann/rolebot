@@ -6,8 +6,19 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import atexit
 
-# Load environment variables from .env file
-load_dotenv()
+# Check if running on Replit
+ON_REPLIT = 'REPLIT_DB_URL' in os.environ
+
+# Import keep_alive if on Replit
+if ON_REPLIT:
+    try:
+        from keep_alive import keep_alive
+    except ImportError:
+        print("Warning: keep_alive module not found. Bot may go to sleep on Replit.")
+
+# Load environment variables from .env file if it exists
+if os.path.exists('.env'):
+    load_dotenv()
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -259,12 +270,26 @@ atexit.register(save_role_mappings)
 
 # Run the bot
 if __name__ == "__main__":
+    # Try to get token from environment variables (works with both .env and Replit secrets)
     TOKEN = os.getenv('DISCORD_TOKEN')
     if not TOKEN:
-        print("Error: No Discord token found. Make sure to set DISCORD_TOKEN in your .env file.")
+        print("Error: No Discord token found. Make sure to set DISCORD_TOKEN in your .env file or Replit secrets.")
+        print("\nIf you're using Replit, add your token as a secret:")
+        print("1. Click on 'Tools' in the left sidebar")
+        print("2. Select 'Secrets'")
+        print("3. Add a new secret with key 'DISCORD_TOKEN' and your bot token as the value")
     else:
         try:
             print("Starting bot...")
+            
+            # Start the keep_alive server if on Replit
+            if ON_REPLIT:
+                try:
+                    keep_alive()
+                    print("Keep alive server started")
+                except:
+                    print("Warning: Could not start keep_alive server")
+            
             bot.run(TOKEN)
         except discord.errors.PrivilegedIntentsRequired:
             print("\n===== ERROR: PRIVILEGED INTENTS REQUIRED =====")

@@ -1,0 +1,3 @@
+language = "python3"
+entrypoint = "rolebot.py"
+run = "python rolebot.py"
