@@ -2,13 +2,13 @@
 # This script keeps the bot running even if it crashes
 
 echo "Installing dependencies..."
-pip install -r requirements.txt
+pip install -r requirements.txt || python3 -m pip install -r requirements.txt
 
 echo "Starting Discord Role Bot with auto-restart..."
 
 while true; do
   echo "Starting bot at $(date)"
-  python rolebot.py
+  python3 rolebot.py
   
   EXIT_CODE=$?
   
