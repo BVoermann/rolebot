@@ -1,23 +1,8 @@
 #!/bin/bash
-# This script keeps the bot running even if it crashes
+# Script for running the Discord bot on Render.com
 
 echo "Installing dependencies..."
-pip install -r requirements.txt || python3 -m pip install -r requirements.txt
+pip install -r requirements.txt
 
-echo "Starting Discord Role Bot with auto-restart..."
-
-while true; do
-  echo "Starting bot at $(date)"
-  python3 rolebot.py
-  
-  EXIT_CODE=$?
-  
-  if [ $EXIT_CODE -eq 0 ]; then
-    echo "Bot exited normally. Exiting loop."
-    break
-  else
-    echo "Bot crashed with exit code $EXIT_CODE"
-    echo "Restarting in 10 seconds..."
-    sleep 10
-  fi
-done 
+echo "Starting Discord Role Bot..."
+python rolebot.py 

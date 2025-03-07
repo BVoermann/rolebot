@@ -1,0 +1,11 @@
+services:
+  # Discord Bot Service
+  - type: worker
+    name: discord-rolebot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python rolebot.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+    autoDeploy: true 

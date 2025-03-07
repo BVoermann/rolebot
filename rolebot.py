@@ -19,25 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("rolebot")
 
-# Check if running on Replit
-ON_REPLIT = 'REPLIT_DB_URL' in os.environ
-
-# Import keep_alive if on Replit
-if ON_REPLIT:
-    try:
-        from keep_alive import keep_alive
-        logger.info("Running on Replit, keep_alive module imported")
-        
-        # Also import the self-pinger
-        try:
-            from replit_ping import start_self_pinger
-            logger.info("Self-pinger module imported")
-        except ImportError:
-            logger.warning("Self-pinger module not found. Bot may go to sleep on Replit.")
-    except ImportError:
-        logger.warning("Warning: keep_alive module not found. Bot may go to sleep on Replit.")
-
-# Load environment variables from .env file if it exists
+# Load environment variables from .env file if it exists (for local development)
 if os.path.exists('.env'):
     load_dotenv()
     logger.info("Loaded environment from .env file")
@@ -88,7 +70,7 @@ def save_role_mappings():
 
 @tasks.loop(minutes=10)
 async def status_update():
-    """Periodically update bot status and log memory usage to keep it active"""
+    """Periodically update bot status and log stats"""
     try:
         guild_count = len(bot.guilds)
         member_count = sum(len(guild.members) for guild in bot.guilds)
@@ -100,21 +82,17 @@ async def status_update():
         )
         await bot.change_presence(activity=activity)
         
-        # Log some stats to keep the bot active
+        # Log some stats 
         logger.info(f"Status update: {guild_count} guilds, {member_count} members")
         
-        # Log memory usage if on Replit
-        if ON_REPLIT:
-            try:
-                memory_usage = os.popen('ps -o rss= -p ' + str(os.getpid())).read().strip()
-                memory_usage_mb = round(int(memory_usage) / 1024, 2)
-                logger.info(f"Memory usage: {memory_usage_mb} MB")
-                
-                # If memory usage is getting high, log a warning
-                if memory_usage_mb > 400:  # 400MB is getting close to the 512MB limit
-                    logger.warning(f"High memory usage: {memory_usage_mb} MB")
-            except:
-                pass
+        # Log memory usage
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_usage_mb = process.memory_info().rss / 1024 / 1024
+            logger.info(f"Memory usage: {memory_usage_mb:.2f} MB")
+        except ImportError:
+            pass
     except Exception as e:
         logger.error(f"Error in status update: {e}")
 
@@ -150,7 +128,7 @@ async def setup_roles(ctx, *, role_emoji_pairs=None):
     
     role_emojis = {}
     
-    print(f"Processing role-emoji pairs: {pairs}")
+    logger.info(f"Processing role-emoji pairs: {pairs}")
     
     for pair in pairs:
         if ":" not in pair:
@@ -162,12 +140,12 @@ async def setup_roles(ctx, *, role_emoji_pairs=None):
         
         if role is None:
             await ctx.send(f"Role '{role_name}' not found.")
-            print(f"Role '{role_name}' not found in guild. Available roles: {[r.name for r in ctx.guild.roles]}")
+            logger.info(f"Role '{role_name}' not found in guild. Available roles: {[r.name for r in ctx.guild.roles]}")
             continue
             
         embed.add_field(name=role.name, value=f"React with {emoji} to get the {role.name} role", inline=False)
         role_emojis[emoji] = role.id
-        print(f"Added mapping: {emoji} -> {role.name} (ID: {role.id})")
+        logger.info(f"Added mapping: {emoji} -> {role.name} (ID: {role.id})")
     
     if not role_emojis:
         await ctx.send("No valid role-emoji pairs provided.")
@@ -177,8 +155,8 @@ async def setup_roles(ctx, *, role_emoji_pairs=None):
     
     # Store the role mappings for this message
     role_mappings[message.id] = role_emojis
-    print(f"Created role-reaction message with ID: {message.id}")
-    print(f"Current role_mappings: {role_mappings}")
+    logger.info(f"Created role-reaction message with ID: {message.id}")
+    logger.info(f"Current role_mappings: {role_mappings}")
     
     # Save the updated mappings
     save_role_mappings()
@@ -186,7 +164,7 @@ async def setup_roles(ctx, *, role_emoji_pairs=None):
     # Add reactions to the message
     for emoji in role_emojis.keys():
         await message.add_reaction(emoji)
-        print(f"Added reaction {emoji} to message")
+        logger.info(f"Added reaction {emoji} to message")
     
     await ctx.message.delete()
 
@@ -197,9 +175,9 @@ async def show_mappings(ctx):
     if not role_mappings:
         await ctx.send("No role mappings have been set up.")
         return
-    
+        
     # Print the mappings to the console for debugging
-    print(f"Current mappings: {role_mappings}")
+    logger.info(f"Current mappings: {role_mappings}")
     
     embed = discord.Embed(
         title="Current Role Mappings",
@@ -236,8 +214,8 @@ async def on_raw_reaction_add(payload):
             emoji = str(payload.emoji)
             emoji_mappings = role_mappings[payload.message_id]
             
-            print(f"Reaction added - Message ID: {payload.message_id}, Emoji: {emoji}")
-            print(f"Available emojis for this message: {list(emoji_mappings.keys())}")
+            logger.info(f"Reaction added - Message ID: {payload.message_id}, Emoji: {emoji}")
+            logger.info(f"Available emojis for this message: {list(emoji_mappings.keys())}")
             
             # Check if the emoji is one we're tracking
             if emoji in emoji_mappings:
@@ -245,35 +223,35 @@ async def on_raw_reaction_add(payload):
                 guild = bot.get_guild(payload.guild_id)
                 
                 if guild is None:
-                    print(f"Error: Could not find guild with ID {payload.guild_id}")
+                    logger.error(f"Error: Could not find guild with ID {payload.guild_id}")
                     return
                     
                 role = guild.get_role(role_id)
                 
                 if role is None:
-                    print(f"Error: Could not find role with ID {role_id}")
+                    logger.error(f"Error: Could not find role with ID {role_id}")
                     return
                 
                 # Try to get member from cache first, then try to fetch if not found
                 member = guild.get_member(payload.user_id)
                 if member is None:
                     try:
-                        print(f"Member not in cache, attempting to fetch member {payload.user_id}")
+                        logger.info(f"Member not in cache, attempting to fetch member {payload.user_id}")
                         member = await guild.fetch_member(payload.user_id)
                     except discord.errors.NotFound:
-                        print(f"Error: Could not find member with ID {payload.user_id} even after fetching")
+                        logger.error(f"Error: Could not find member with ID {payload.user_id} even after fetching")
                         return
                     except Exception as e:
-                        print(f"Error fetching member: {e}")
+                        logger.error(f"Error fetching member: {e}")
                         return
                 
-                print(f"Attempting to add role '{role.name}' to user '{member.display_name}'")
+                logger.info(f"Attempting to add role '{role.name}' to user '{member.display_name}'")
                 await member.add_roles(role)
-                print(f"Role '{role.name}' added to '{member.display_name}' successfully")
+                logger.info(f"Role '{role.name}' added to '{member.display_name}' successfully")
             else:
-                print(f"Emoji {emoji} not found in mappings for message {payload.message_id}")
+                logger.info(f"Emoji {emoji} not found in mappings for message {payload.message_id}")
     except Exception as e:
-        print(f"Error in on_raw_reaction_add: {e}")
+        logger.error(f"Error in on_raw_reaction_add: {e}")
         traceback.print_exc()
 
 @bot.event
@@ -284,7 +262,7 @@ async def on_raw_reaction_remove(payload):
             emoji = str(payload.emoji)
             emoji_mappings = role_mappings[payload.message_id]
             
-            print(f"Reaction removed - Message ID: {payload.message_id}, Emoji: {emoji}")
+            logger.info(f"Reaction removed - Message ID: {payload.message_id}, Emoji: {emoji}")
             
             # Check if the emoji is one we're tracking
             if emoji in emoji_mappings:
@@ -292,39 +270,36 @@ async def on_raw_reaction_remove(payload):
                 guild = bot.get_guild(payload.guild_id)
                 
                 if guild is None:
-                    print(f"Error: Could not find guild with ID {payload.guild_id}")
+                    logger.error(f"Error: Could not find guild with ID {payload.guild_id}")
                     return
                     
                 role = guild.get_role(role_id)
                 
                 if role is None:
-                    print(f"Error: Could not find role with ID {role_id}")
+                    logger.error(f"Error: Could not find role with ID {role_id}")
                     return
                 
                 # Try to get member from cache first, then try to fetch if not found
                 member = guild.get_member(payload.user_id)
                 if member is None:
                     try:
-                        print(f"Member not in cache, attempting to fetch member {payload.user_id}")
+                        logger.info(f"Member not in cache, attempting to fetch member {payload.user_id}")
                         member = await guild.fetch_member(payload.user_id)
                     except discord.errors.NotFound:
-                        print(f"Error: Could not find member with ID {payload.user_id} even after fetching")
+                        logger.error(f"Error: Could not find member with ID {payload.user_id} even after fetching")
                         return
                     except Exception as e:
-                        print(f"Error fetching member: {e}")
+                        logger.error(f"Error fetching member: {e}")
                         return
                 
-                print(f"Attempting to remove role '{role.name}' from user '{member.display_name}'")
+                logger.info(f"Attempting to remove role '{role.name}' from user '{member.display_name}'")
                 await member.remove_roles(role)
-                print(f"Role '{role.name}' removed from '{member.display_name}' successfully")
+                logger.info(f"Role '{role.name}' removed from '{member.display_name}' successfully")
             else:
-                print(f"Emoji {emoji} not found in mappings for message {payload.message_id}")
+                logger.info(f"Emoji {emoji} not found in mappings for message {payload.message_id}")
     except Exception as e:
-        print(f"Error in on_raw_reaction_remove: {e}")
+        logger.error(f"Error in on_raw_reaction_remove: {e}")
         traceback.print_exc()
-
-# Also ensure we save any changes to role mappings when the bot stops 
-atexit.register(save_role_mappings)
 
 # Reconnect handler
 @bot.event
@@ -337,34 +312,20 @@ async def on_error(event, *args, **kwargs):
     logger.error(f"Error in event {event}: {sys.exc_info()[1]}")
     traceback.print_exc()
 
+# Also ensure we save any changes to role mappings when the bot stops 
+atexit.register(save_role_mappings)
+
 # Run the bot
 if __name__ == "__main__":
-    # Try to get token from environment variables (works with both .env and Replit secrets)
+    # Try to get token from environment variables
     TOKEN = os.getenv('DISCORD_TOKEN')
     if not TOKEN:
-        logger.error("No Discord token found. Make sure to set DISCORD_TOKEN in your .env file or Replit secrets.")
-        logger.info("\nIf you're using Replit, add your token as a secret:")
-        logger.info("1. Click on 'Tools' in the left sidebar")
-        logger.info("2. Select 'Secrets'")
-        logger.info("3. Add a new secret with key 'DISCORD_TOKEN' and your bot token as the value")
+        logger.error("No Discord token found. Make sure to set DISCORD_TOKEN in your environment variables.")
+        logger.info("If running locally, create a .env file with DISCORD_TOKEN=your_token")
+        logger.info("If running on Render.com, add DISCORD_TOKEN to your service's environment variables.")
     else:
         try:
             logger.info("Starting bot...")
-            
-            # Start the keep_alive server if on Replit
-            if ON_REPLIT:
-                try:
-                    keep_alive_thread = keep_alive()
-                    logger.info("Keep alive server started")
-                    
-                    # Also start the self-pinger
-                    try:
-                        pinger_thread = start_self_pinger(interval_seconds=240)  # ping every 4 minutes
-                        logger.info("Self-pinger started")
-                    except Exception as e:
-                        logger.error(f"Could not start self-pinger: {e}")
-                except Exception as e:
-                    logger.error(f"Could not start keep_alive server: {e}")
             
             # Run the bot with automatic reconnects enabled
             bot.run(TOKEN, reconnect=True)
