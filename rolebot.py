@@ -8,6 +8,9 @@ import sys
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import atexit
+import threading
+import http.server
+import socketserver
 
 # Set up logging
 logging.basicConfig(
@@ -315,6 +318,30 @@ async def on_error(event, *args, **kwargs):
 # Also ensure we save any changes to role mappings when the bot stops 
 atexit.register(save_role_mappings)
 
+# Simple web server to keep Render happy
+def start_web_server():
+    """Start a minimal web server for Render.com"""
+    PORT = int(os.environ.get('PORT', 10000))
+    
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b'Discord bot is running!')
+            
+        def log_message(self, format, *args):
+            # Suppress log messages
+            return
+    
+    def run_server():
+        with socketserver.TCPServer(("", PORT), Handler) as httpd:
+            logger.info(f"Started minimal web server on port {PORT}")
+            httpd.serve_forever()
+    
+    # Start the server in a thread
+    threading.Thread(target=run_server, daemon=True).start()
+
 # Run the bot
 if __name__ == "__main__":
     # Try to get token from environment variables
@@ -326,6 +353,11 @@ if __name__ == "__main__":
     else:
         try:
             logger.info("Starting bot...")
+            
+            # Start minimal web server for Render.com
+            if os.environ.get('RENDER'):
+                start_web_server()
+                logger.info("Running on Render.com - started minimal web server")
             
             # Run the bot with automatic reconnects enabled
             bot.run(TOKEN, reconnect=True)
