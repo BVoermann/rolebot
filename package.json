@@ -1,0 +1,13 @@
+{
+  "name": "discord-rolebot-always-on",
+  "version": "1.0.0",
+  "description": "Always On server for Discord Role Bot",
+  "main": "always_on.js",
+  "scripts": {
+    "start": "node always_on.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.2"
+  }
+} 

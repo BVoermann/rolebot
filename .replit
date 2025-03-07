@@ -1,2 +1,2 @@
-language = "bash"
-run = "bash run.sh"
+run = "bash run.sh & npm start"
+entrypoint = "always_on.js"
