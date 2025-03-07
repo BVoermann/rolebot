@@ -5,6 +5,8 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python rolebot.py
+    plan: free
+    pythonVersion: 3.9
     envVars:
       - key: DISCORD_TOKEN
         sync: false
