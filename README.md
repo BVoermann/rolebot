@@ -20,7 +20,7 @@ A Discord bot that allows users to assign themselves roles by reacting to messag
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/rolebot.git
+git clone https://github.com/BVoermann/rolebot.git
 cd rolebot
 ```
 
