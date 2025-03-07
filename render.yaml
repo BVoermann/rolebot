@@ -10,4 +10,6 @@ services:
         sync: false
       - key: PORT
         value: 10000
-    autoDeploy: true 
+    autoDeploy: true
+    healthCheckPath: /health
+    healthCheckTimeout: 5 

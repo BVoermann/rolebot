@@ -11,6 +11,8 @@ import atexit
 import threading
 import http.server
 import socketserver
+import datetime
+import json as json_lib
 
 # Set up logging
 logging.basicConfig(
@@ -43,6 +45,15 @@ role_mappings = {}
 
 # File to save/load role mappings
 MAPPINGS_FILE = "role_mappings.json"
+
+# Global variable to track bot status
+bot_status = {
+    "start_time": datetime.datetime.now().isoformat(),
+    "is_connected": False,
+    "guilds": 0,
+    "last_heartbeat": None,
+    "memory_usage_mb": 0
+}
 
 # Load role mappings from file
 def load_role_mappings():
@@ -88,12 +99,17 @@ async def status_update():
         # Log some stats 
         logger.info(f"Status update: {guild_count} guilds, {member_count} members")
         
+        # Update global status for web server
+        bot_status["guilds"] = guild_count
+        bot_status["is_connected"] = True
+        
         # Log memory usage
         try:
             import psutil
             process = psutil.Process(os.getpid())
             memory_usage_mb = process.memory_info().rss / 1024 / 1024
             logger.info(f"Memory usage: {memory_usage_mb:.2f} MB")
+            bot_status["memory_usage_mb"] = memory_usage_mb
         except ImportError:
             pass
     except Exception as e:
@@ -103,6 +119,10 @@ async def status_update():
 async def on_ready():
     logger.info(f'{bot.user.name} has connected to Discord!')
     logger.info(f'Bot is in {len(bot.guilds)} guilds')
+    
+    # Update global status
+    bot_status["is_connected"] = True
+    bot_status["guilds"] = len(bot.guilds)
     
     # Load the role mappings when the bot starts
     load_role_mappings()
@@ -323,24 +343,90 @@ def start_web_server():
     """Start a minimal web server for Render.com"""
     PORT = int(os.environ.get('PORT', 10000))
     
-    class Handler(http.server.SimpleHTTPRequestHandler):
+    class RenderHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b'Discord bot is running!')
+            if self.path == '/health' or self.path == '/healthz':
+                # Health check endpoint
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                
+                # Update last heartbeat
+                bot_status["last_heartbeat"] = datetime.datetime.now().isoformat()
+                
+                # Get uptime
+                start_time = datetime.datetime.fromisoformat(bot_status["start_time"])
+                uptime = datetime.datetime.now() - start_time
+                
+                health_data = {
+                    "status": "up",
+                    "uptime_seconds": uptime.total_seconds(),
+                    "discord_connected": bot_status["is_connected"],
+                    "guilds": bot_status["guilds"],
+                    "memory_usage_mb": bot_status["memory_usage_mb"]
+                }
+                self.wfile.write(json_lib.dumps(health_data).encode())
+            else:
+                # Root route or any other path
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                
+                html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Discord Role Bot</title>
+                    <style>
+                        body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; color: #333; }}
+                        .container {{ max-width: 800px; margin: 0 auto; border: 1px solid #ddd; padding: 20px; border-radius: 5px; }}
+                        h1 {{ color: #7289DA; }}
+                        .status {{ padding: 10px; border-radius: 5px; margin: 15px 0; }}
+                        .online {{ background-color: #43B581; color: white; }}
+                        .offline {{ background-color: #F04747; color: white; }}
+                        .info {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; }}
+                        .footer {{ margin-top: 30px; font-size: 0.8em; color: #666; text-align: center; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>Discord Role Bot</h1>
+                        <div class="status {'online' if bot_status['is_connected'] else 'offline'}">
+                            Bot is currently {'ONLINE' if bot_status['is_connected'] else 'OFFLINE'}
+                        </div>
+                        <div class="info">
+                            <p><strong>Start Time:</strong> {bot_status['start_time']}</p>
+                            <p><strong>Connected Servers:</strong> {bot_status['guilds']}</p>
+                            <p><strong>Memory Usage:</strong> {bot_status['memory_usage_mb']:.2f} MB</p>
+                            <p><strong>Last Health Check:</strong> {bot_status['last_heartbeat'] if bot_status['last_heartbeat'] else 'None'}</p>
+                        </div>
+                        <p>This is a Discord bot that allows users to assign themselves roles by reacting to messages with emojis.</p>
+                        <p>The bot is hosted on Render.com and is running 24/7.</p>
+                        <div class="footer">
+                            <p>© {datetime.datetime.now().year} Discord Role Bot</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+                self.wfile.write(html.encode())
             
         def log_message(self, format, *args):
-            # Suppress log messages
-            return
+            # Only log errors, suppress regular access logs
+            if args[1] != '200':
+                logger.info(f"Web server: {format % args}")
     
     def run_server():
-        with socketserver.TCPServer(("", PORT), Handler) as httpd:
-            logger.info(f"Started minimal web server on port {PORT}")
+        # Create a server that reuses the address
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.TCPServer(("", PORT), RenderHandler) as httpd:
+            logger.info(f"Started web server on port {PORT}")
             httpd.serve_forever()
     
     # Start the server in a thread
-    threading.Thread(target=run_server, daemon=True).start()
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    return thread
 
 # Run the bot
 if __name__ == "__main__":
@@ -354,10 +440,9 @@ if __name__ == "__main__":
         try:
             logger.info("Starting bot...")
             
-            # Start minimal web server for Render.com
-            if os.environ.get('RENDER'):
-                start_web_server()
-                logger.info("Running on Render.com - started minimal web server")
+            # Start web server (required for Render.com web service)
+            web_thread = start_web_server()
+            logger.info("Started web server for Render.com compatibility")
             
             # Run the bot with automatic reconnects enabled
             bot.run(TOKEN, reconnect=True)
