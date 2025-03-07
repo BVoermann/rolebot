@@ -2,9 +2,22 @@ import os
 import json
 import discord
 import traceback
-from discord.ext import commands
+import logging
+import time
+import sys
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import atexit
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("rolebot")
 
 # Check if running on Replit
 ON_REPLIT = 'REPLIT_DB_URL' in os.environ
@@ -13,12 +26,21 @@ ON_REPLIT = 'REPLIT_DB_URL' in os.environ
 if ON_REPLIT:
     try:
         from keep_alive import keep_alive
+        logger.info("Running on Replit, keep_alive module imported")
+        
+        # Also import the self-pinger
+        try:
+            from replit_ping import start_self_pinger
+            logger.info("Self-pinger module imported")
+        except ImportError:
+            logger.warning("Self-pinger module not found. Bot may go to sleep on Replit.")
     except ImportError:
-        print("Warning: keep_alive module not found. Bot may go to sleep on Replit.")
+        logger.warning("Warning: keep_alive module not found. Bot may go to sleep on Replit.")
 
 # Load environment variables from .env file if it exists
 if os.path.exists('.env'):
     load_dotenv()
+    logger.info("Loaded environment from .env file")
 
 # Bot configuration
 intents = discord.Intents.default()
@@ -46,11 +68,11 @@ def load_role_mappings():
                 # JSON loads message_id as string, need to convert back to int
                 data = json.load(f)
                 role_mappings = {int(k): v for k, v in data.items()}
-                print(f"Loaded role mappings: {role_mappings}")
+                logger.info(f"Loaded role mappings: {role_mappings}")
         else:
-            print(f"No mappings file found at {MAPPINGS_FILE}")
+            logger.info(f"No mappings file found at {MAPPINGS_FILE}")
     except Exception as e:
-        print(f"Error loading role mappings: {e}")
+        logger.error(f"Error loading role mappings: {e}")
         traceback.print_exc()
 
 # Save role mappings to file
@@ -59,17 +81,53 @@ def save_role_mappings():
         with open(MAPPINGS_FILE, 'w') as f:
             # Convert message_id to string for JSON
             json.dump({str(k): v for k, v in role_mappings.items()}, f, indent=4)
-            print(f"Saved role mappings to {MAPPINGS_FILE}")
+            logger.info(f"Saved role mappings to {MAPPINGS_FILE}")
     except Exception as e:
-        print(f"Error saving role mappings: {e}")
+        logger.error(f"Error saving role mappings: {e}")
         traceback.print_exc()
+
+@tasks.loop(minutes=10)
+async def status_update():
+    """Periodically update bot status and log memory usage to keep it active"""
+    try:
+        guild_count = len(bot.guilds)
+        member_count = sum(len(guild.members) for guild in bot.guilds)
+        
+        # Update bot status
+        activity = discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{guild_count} servers | !setup_roles"
+        )
+        await bot.change_presence(activity=activity)
+        
+        # Log some stats to keep the bot active
+        logger.info(f"Status update: {guild_count} guilds, {member_count} members")
+        
+        # Log memory usage if on Replit
+        if ON_REPLIT:
+            try:
+                memory_usage = os.popen('ps -o rss= -p ' + str(os.getpid())).read().strip()
+                memory_usage_mb = round(int(memory_usage) / 1024, 2)
+                logger.info(f"Memory usage: {memory_usage_mb} MB")
+                
+                # If memory usage is getting high, log a warning
+                if memory_usage_mb > 400:  # 400MB is getting close to the 512MB limit
+                    logger.warning(f"High memory usage: {memory_usage_mb} MB")
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"Error in status update: {e}")
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user.name} has connected to Discord!')
-    print(f'Bot is in {len(bot.guilds)} guilds')
+    logger.info(f'{bot.user.name} has connected to Discord!')
+    logger.info(f'Bot is in {len(bot.guilds)} guilds')
+    
     # Load the role mappings when the bot starts
     load_role_mappings()
+    
+    # Start the status update task
+    status_update.start()
 
 @bot.command(name='setup_roles')
 @commands.has_permissions(administrator=True)
@@ -268,39 +326,61 @@ async def on_raw_reaction_remove(payload):
 # Also ensure we save any changes to role mappings when the bot stops 
 atexit.register(save_role_mappings)
 
+# Reconnect handler
+@bot.event
+async def on_resumed():
+    logger.info("Bot resumed connection with Discord")
+
+# Error handler for the bot
+@bot.event
+async def on_error(event, *args, **kwargs):
+    logger.error(f"Error in event {event}: {sys.exc_info()[1]}")
+    traceback.print_exc()
+
 # Run the bot
 if __name__ == "__main__":
     # Try to get token from environment variables (works with both .env and Replit secrets)
     TOKEN = os.getenv('DISCORD_TOKEN')
     if not TOKEN:
-        print("Error: No Discord token found. Make sure to set DISCORD_TOKEN in your .env file or Replit secrets.")
-        print("\nIf you're using Replit, add your token as a secret:")
-        print("1. Click on 'Tools' in the left sidebar")
-        print("2. Select 'Secrets'")
-        print("3. Add a new secret with key 'DISCORD_TOKEN' and your bot token as the value")
+        logger.error("No Discord token found. Make sure to set DISCORD_TOKEN in your .env file or Replit secrets.")
+        logger.info("\nIf you're using Replit, add your token as a secret:")
+        logger.info("1. Click on 'Tools' in the left sidebar")
+        logger.info("2. Select 'Secrets'")
+        logger.info("3. Add a new secret with key 'DISCORD_TOKEN' and your bot token as the value")
     else:
         try:
-            print("Starting bot...")
+            logger.info("Starting bot...")
             
             # Start the keep_alive server if on Replit
             if ON_REPLIT:
                 try:
-                    keep_alive()
-                    print("Keep alive server started")
-                except:
-                    print("Warning: Could not start keep_alive server")
+                    keep_alive_thread = keep_alive()
+                    logger.info("Keep alive server started")
+                    
+                    # Also start the self-pinger
+                    try:
+                        pinger_thread = start_self_pinger(interval_seconds=240)  # ping every 4 minutes
+                        logger.info("Self-pinger started")
+                    except Exception as e:
+                        logger.error(f"Could not start self-pinger: {e}")
+                except Exception as e:
+                    logger.error(f"Could not start keep_alive server: {e}")
             
-            bot.run(TOKEN)
+            # Run the bot with automatic reconnects enabled
+            bot.run(TOKEN, reconnect=True)
         except discord.errors.PrivilegedIntentsRequired:
-            print("\n===== ERROR: PRIVILEGED INTENTS REQUIRED =====")
-            print("You need to enable privileged intents in the Discord Developer Portal.")
-            print("\nPlease follow these steps:")
-            print("1. Go to https://discord.com/developers/applications/")
-            print("2. Select your bot application")
-            print("3. Go to the 'Bot' tab")
-            print("4. Scroll down to 'Privileged Gateway Intents'")
-            print("5. Enable 'MESSAGE CONTENT INTENT'")
-            print("6. Click 'Save Changes'")
-            print("7. Restart the bot")
-            print("\nIf you don't want to enable these intents, you will need to modify the code to not use them.")
-            print("===============================================") 
+            logger.error("\n===== ERROR: PRIVILEGED INTENTS REQUIRED =====")
+            logger.error("You need to enable privileged intents in the Discord Developer Portal.")
+            logger.error("\nPlease follow these steps:")
+            logger.error("1. Go to https://discord.com/developers/applications/")
+            logger.error("2. Select your bot application")
+            logger.error("3. Go to the 'Bot' tab")
+            logger.error("4. Scroll down to 'Privileged Gateway Intents'")
+            logger.error("5. Enable 'MESSAGE CONTENT INTENT'")
+            logger.error("6. Click 'Save Changes'")
+            logger.error("7. Restart the bot")
+            logger.error("\nIf you don't want to enable these intents, you will need to modify the code to not use them.")
+            logger.error("===============================================")
+        except Exception as e:
+            logger.error(f"Error starting bot: {e}")
+            traceback.print_exc() 

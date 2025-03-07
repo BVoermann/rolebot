@@ -1,3 +1,2 @@
-language = "python3"
-entrypoint = "rolebot.py"
-run = "python rolebot.py"
+language = "bash"
+run = "bash run.sh"
